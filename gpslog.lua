@@ -14,18 +14,35 @@ local mid = LCD_W / 2  -- Center alignment for LCD display
 local gpsLatLonId
 local gpsAltId
 local chArmedId
+local gpsHdgId
+local gpssatId
 local armed
 local arm_time = 0 -- timestamp when armed
 local waypoints_recorded = 0
 local latitude, longitude = 0.0, 0.0
 local altitude = 0.0
+local gpsSATS = 0
+local gpsHdg = 0
 local gpx_path = ""
+
+local function getTelemetryId(name)    
+	field = getFieldInfo(name)
+	if field then
+		return field.id
+	else
+		return-1
+	end
+end
 
 -- Initialization function
 local function init_func()
-    gpsLatLonId = getFieldInfo("GPS") and getFieldInfo("GPS").id or nil;
-    gpsAltId  = getFieldInfo("Alt") and getFieldInfo("Alt").id or nil;
+    gpsLatLonId = getTelemetryId("GPS")
+    gpsAltId  = getTelemetryId("Alt")
     chArmedId = getFieldInfo('ch5').id	
+	gpssatId = getTelemetryId("Sats")
+	--if Stats can't be read, try to read Tmp2 (number of satellites SBUS/FRSKY)
+	if (gpssatId == -1) then gpssatId = getTelemetryId("Tmp2") end
+	gpsHdgId = getTelemetryId("Hdg")
 end
 
 local function write_gps_file_header()
@@ -80,7 +97,23 @@ local function bg_func()
 	
 	local gpsLatLon = getValue(gpsLatLonId)
 	local altitude_new = getValue(gpsAltId)
-			
+	gpsHdg = getValue(gpsHdgId)
+
+	gpsSATS = getValue(gpssatId)
+	
+	if string.len(gpsSATS) > 2 then		
+		-- SBUS Example 1013: -> 1= GPS fix 0=lowest accuracy 13=13 active satellites
+		--[	Sats / Tmp2 : GPS lock status, accuracy, home reset trigger, and number of satellites. Number is sent as ABCD detailed below. Typical minimum 
+		--[	A : 1 = GPS fix, 2 = GPS home fix, 4 = home reset (numbers are additive)
+		--[	B : GPS accuracy based on HDOP (0 = lowest to 9 = highest accuracy)
+		--[	C : number of satellites locked (digit C & D are the number of locked satellites)
+		--[ D : number of satellites locked (if 14 satellites are locked, C = 1 & D = 4)		
+		gpsSATS = string.sub (gpsSATS, 3,6)		
+	else
+		--CROSSFIRE stores only the active GPS satellite
+		gpsSATS = string.sub (gpsSATS, 0,3)		
+	end	
+	
 	if armed
 	and gpsLatLon ~= 0
 	and (gpsLatLon.lat ~= latitude or gpsLatLon.lon ~= longitude or altitude_new ~= altitude) then	
@@ -95,8 +128,8 @@ local function bg_func()
 		tonumber(dt.hour), tonumber(dt.min), tonumber(dt.sec))
 					
 		io.write(log_file, string.format(
-		"<trkpt lat='%f' lon='%f'><ele>%f</ele><time>%s</time></trkpt>\n", 
-		latitude, longitude, altitude, timestamp))
+		"<trkpt lat='%f' lon='%f'><ele>%f</ele><sat>%f</sat><magvar>%f</magvar><time>%s</time></trkpt>\n", 
+		latitude, longitude, altitude, gpsSATS, gpsHdg, timestamp))
 		
 		waypoints_recorded = waypoints_recorded + 1
 	end	
